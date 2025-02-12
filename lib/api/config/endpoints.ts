@@ -1,7 +1,7 @@
 // Configuration des endpoints de l'API
 export const ENDPOINTS = {
   AUTH: {
-    LOGIN: 'api/v1/auth/login',
+    LOGIN: 'api/v1/users',
     REGISTER: 'api/v1/users',
     PROFILE: 'api/v1/auth/profile',
   },
