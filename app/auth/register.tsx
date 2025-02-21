@@ -1,17 +1,29 @@
 import React, { useState } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, 
-  Alert, ScrollView, ActivityIndicator 
+  Alert, ScrollView, ActivityIndicator, Platform 
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { authApi } from '@/lib/api/client/authApi';
 import RadioGroup from 'react-native-radio-buttons-group';
 import * as Location from 'expo-location';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
+const API_URL = Platform.select({
+  android: 'http://10.0.2.2:8000',
+  ios: 'http://192.168.10.102:8000',  // Votre adresse IP WiFi réelle
+  default: 'http://localhost:8000'
+});
+
 const USER_TYPES = [
   { id: 'CLIENT', label: 'Client', value: 'CLIENT' },
   { id: 'PRE_COLLECTOR', label: 'Pré-collecteur', value: 'PRE_COLLECTOR' }
+];
+
+const COLLECTOR_CATEGORIES = [
+  { id: 'POUBELLE', label: 'Poubelle', value: 'POUBELLE' },
+  { id: 'CENTRE_TRI', label: 'Centre de tri', value: 'CENTRE_TRI' },
+  { id: 'DECHETTERIE', label: 'Déchetterie', value: 'DECHETTERIE' },
+  { id: 'TOUS', label: 'Tous', value: 'TOUS' }
 ];
 
 export default function RegisterScreen() {
@@ -24,11 +36,12 @@ export default function RegisterScreen() {
     password: '',
     phoneNumber: '',
     type: 'CLIENT',
-    latitude: null,  // Latitude de localisation
-    longitude: null, // Longitude de localisation
+    category: '',
+    latitude: null,
+    longitude: null,
   });
 
-  const [address, setAddress] = useState(''); // Nouveau state pour stocker l'adresse
+  const [address, setAddress] = useState('');
   const [loading, setLoading] = useState(false);
   const [locating, setLocating] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -45,74 +58,83 @@ export default function RegisterScreen() {
       const location = await Location.getCurrentPositionAsync({});
       const { latitude, longitude } = location.coords;
 
-      console.log("Coordonnées obtenues : ", latitude, longitude);
+      console.log('Coordonnées obtenues:', { latitude, longitude });
 
       if (latitude && longitude) {
-        // Mise à jour de formData avec les coordonnées
         setFormData((prevData) => ({
           ...prevData,
-          latitude,   // Mettre à jour latitude
-          longitude,  // Mettre à jour longitude
+          latitude,
+          longitude,
         }));
 
-        // Géocodage inverse pour obtenir l'adresse
         const address = await Location.reverseGeocodeAsync({ latitude, longitude });
         
         if (address && address[0]) {
           const formattedAddress = `${address[0].city}, ${address[0].region}, ${address[0].country}`;
-          
-          // Mise à jour du champ address pour afficher l'adresse sans l'envoyer au backend
           setAddress(formattedAddress);
-
-          console.log("Adresse obtenue: ", formattedAddress);
+          console.log('Adresse formatée:', formattedAddress);
           Alert.alert('Localisation obtenue', `Position: ${formattedAddress}`);
-        } else {
-          Alert.alert('Erreur', 'Adresse introuvable pour cette position.');
         }
-      } else {
-        Alert.alert('Erreur', 'Les coordonnées sont introuvables.');
       }
-
     } catch (error) {
-      console.error("Erreur lors de la récupération de la localisation: ", error);
+      console.error("Erreur lors de la récupération de la localisation:", error);
       Alert.alert('Erreur', 'Impossible de récupérer la position.');
     } finally {
       setLocating(false);
     }
   };
 
-  // Fonction de gestion de l'inscription
   const handleRegister = async () => {
     if (loading) return;
+
+    // Validation des champs
+    if (!formData.firstName || !formData.lastName || !formData.email || 
+        !formData.password || !formData.phoneNumber) {
+      Alert.alert('Erreur', 'Veuillez remplir tous les champs obligatoires.');
+      return;
+    }
+
+    // Validation spécifique pour les pré-collecteurs
+    if (formData.type === 'PRE_COLLECTOR') {
+      if (!formData.category) {
+        Alert.alert('Erreur', 'Veuillez sélectionner une catégorie de pré-collecteur.');
+        return;
+      }
+      if (!formData.latitude || !formData.longitude) {
+        Alert.alert('Erreur', 'Veuillez définir votre localisation.');
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
-      console.log("Données du formulaire avant l'inscription: ", formData);
+      console.log('URL de l\'API:', `${API_URL}/api/v1/users`);
+      console.log('Données envoyées:', formData);
 
-      // Validation des champs obligatoires pour un pré-collecteur
-      if (!formData.firstName || !formData.lastName || !formData.email || 
-          !formData.password || !formData.phoneNumber || 
-          formData.type === 'PRE_COLLECTOR' && (!formData.latitude || !formData.longitude)) {
-        Alert.alert('Erreur', 'Veuillez remplir tous les champs.');
-        return;
-      }
-
-      // Appel API pour l'enregistrement de l'utilisateur
-      const response = await authApi.register({
-        ...formData,
-        // Envoi uniquement des coordonnées latitude et longitude
-        latitude: formData.latitude, 
-        longitude: formData.longitude, 
+      const response = await fetch(`${API_URL}/api/v1/users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(formData)
       });
 
-      console.log("Réponse de l'API lors de l'inscription: ", response);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Une erreur est survenue');
+      }
 
+      const data = await response.json();
+      console.log('Réponse de l\'API:', data);
+      
       Alert.alert('Succès', 'Compte créé avec succès !', [
         { text: 'OK', onPress: () => router.push('/auth/login') }
       ]);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue lors de l\'inscription';
-      console.error("Erreur lors de l'inscription: ", errorMessage);
+      console.error('Erreur détaillée:', error);
+      const errorMessage = error.message || 'Une erreur est survenue lors de l\'inscription';
       Alert.alert('Erreur', errorMessage);
     } finally {
       setLoading(false);
@@ -123,7 +145,6 @@ export default function RegisterScreen() {
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Créer un compte</Text>
 
-      {/* Champs pour les informations personnelles */}
       <TextInput
         style={styles.input}
         placeholder="Prénom"
@@ -178,24 +199,38 @@ export default function RegisterScreen() {
         />
       </View>
 
-      {/* Champ de localisation pour les pré-collecteurs */}
       {formData.type === 'PRE_COLLECTOR' && (
-        <View>
-          <Text style={styles.selectLabel}>Localisation (ville, région, pays)</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Localisation"
-            value={address}  // Afficher l'adresse sans la stocker dans formData
-            editable={false}  // Le champ est en lecture seule
-          />
-          <TouchableOpacity 
-            style={[styles.locateButton, locating && styles.buttonDisabled]}
-            onPress={getCurrentLocation}
-            disabled={locating}
-          >
-            {locating ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Obtenir ma position</Text>}
-          </TouchableOpacity>
-        </View>
+        <>
+          <View style={styles.radioContainer}>
+            <Text style={styles.selectLabel}>Type de point de collecte</Text>
+            <View style={styles.categoriesContainer}>
+              <RadioGroup
+                radioButtons={COLLECTOR_CATEGORIES}
+                onPress={(selectedId) => setFormData({...formData, category: selectedId})}
+                selectedId={formData.category}
+                layout="row"
+                containerStyle={styles.categoriesGrid}
+              />
+            </View>
+          </View>
+
+          <View>
+            <Text style={styles.selectLabel}>Localisation (ville, région, pays)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Localisation"
+              value={address}
+              editable={false}
+            />
+            <TouchableOpacity 
+              style={[styles.locateButton, locating && styles.buttonDisabled]}
+              onPress={getCurrentLocation}
+              disabled={locating}
+            >
+              {locating ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Obtenir ma position</Text>}
+            </TouchableOpacity>
+          </View>
+        </>
       )}
 
       <TouchableOpacity 
@@ -214,17 +249,86 @@ export default function RegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f9f9f9' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 30, textAlign: 'center', marginTop: 40 },
-  input: { height: 50, borderColor: '#ccc', borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, marginBottom: 15, backgroundColor: '#fff' },
-  radioContainer: { marginBottom: 15 },
-  selectLabel: { fontSize: 16, marginBottom: 5, color: '#333' },
-  button: { backgroundColor: '#007bff', padding: 15, borderRadius: 8, marginTop: 10 },
-  locateButton: { backgroundColor: '#28a745', padding: 12, borderRadius: 8, marginTop: 10 },
-  buttonDisabled: { backgroundColor: '#cccccc' },
-  buttonText: { color: '#fff', textAlign: 'center', fontSize: 16, fontWeight: 'bold' },
-  link: { color: '#007bff', marginTop: 15, textAlign: 'center', textDecorationLine: 'underline' },
-  passwordContainer: { flexDirection: 'row', alignItems: 'center', borderColor: '#ccc', borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, marginBottom: 15, backgroundColor: '#fff' },
-  passwordInput: { flex: 1, height: 50 },
-  icon: { padding: 10 },
+  container: { 
+    flex: 1, 
+    padding: 20, 
+    backgroundColor: '#f9f9f9' 
+  },
+  title: { 
+    fontSize: 24, 
+    fontWeight: 'bold', 
+    marginBottom: 30, 
+    textAlign: 'center', 
+    marginTop: 40 
+  },
+  input: { 
+    height: 50, 
+    borderColor: '#ccc', 
+    borderWidth: 1, 
+    borderRadius: 8, 
+    paddingHorizontal: 10, 
+    marginBottom: 15, 
+    backgroundColor: '#fff' 
+  },
+  radioContainer: { 
+    marginBottom: 15 
+  },
+  categoriesContainer: {
+    marginTop: 10
+  },
+  categoriesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 10
+  },
+  selectLabel: { 
+    fontSize: 16, 
+    marginBottom: 5, 
+    color: '#333' 
+  },
+  button: { 
+    backgroundColor: '#007bff', 
+    padding: 15, 
+    borderRadius: 8, 
+    marginTop: 10 
+  },
+  locateButton: { 
+    backgroundColor: '#28a745', 
+    padding: 12, 
+    borderRadius: 8, 
+    marginTop: 10 
+  },
+  buttonDisabled: { 
+    backgroundColor: '#cccccc' 
+  },
+  buttonText: { 
+    color: '#fff', 
+    textAlign: 'center', 
+    fontSize: 16, 
+    fontWeight: 'bold' 
+  },
+  link: { 
+    color: '#007bff', 
+    marginTop: 15, 
+    textAlign: 'center', 
+    textDecorationLine: 'underline' 
+  },
+  passwordContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    borderColor: '#ccc', 
+    borderWidth: 1, 
+    borderRadius: 8, 
+    paddingHorizontal: 10, 
+    marginBottom: 15, 
+    backgroundColor: '#fff' 
+  },
+  passwordInput: { 
+    flex: 1, 
+    height: 50 
+  },
+  icon: { 
+    padding: 10 
+  },
 });
